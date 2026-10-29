@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'">
 <title>Word Tile Board</title>
 <style>
 :root{--bg:#fbfaf6;--fg:#111;--tile:#eeeee8;--line:#d6d6cc;--accent:#1a5d4a;--muted:#666;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
@@ -26,7 +27,7 @@ textarea{width:100%;box-sizing:border-box;min-height:90px;font:inherit;font-size
 details{margin-top:14px}
 </style></head>
 <body><main>
-<h1>Word Tile Board</h1>
+<h1>Moveable Tiles</h1>
 <p class="sub">Upload a screenshot of tiles and each one becomes a movable picture. Drag tiles anywhere to group them.</p>
 <div class="bar">
 <label class="btn">Upload Image<input id="file" type="file" accept="image/*" hidden></label>
@@ -44,7 +45,7 @@ details{margin-top:14px}
 const $=s=>document.querySelector(s), board=$('#board'), statusEl=$('#status');
 const SAMPLE=['Tuxedo','Waddle','Antarctica','Traffic light','Gothic','Candy corn','Sans','Payphone','Roman','Emperor','Wishing well','Typewriter','Piggy bank','Calico','Parking meter','Neapolitan'];
 let cols=4, z=1, original=[], aspect=null;
-const G=10, MINW=112;
+const G=10, MINW=112, MAXBYTES=15e6, MAXPIX=16e6, MAXTILES=64, MAXLEN=60;
 function dims(){const W=board.clientWidth,w=(W-G*(cols-1))/cols;return{w,h:aspect?w/aspect:Math.max(52,Math.min(84,w*.5))}}
 function size(){const d=dims(),n=board.children.length;
  board.style.height=3*(Math.ceil(n/cols)*(d.h+G)-G)+'px';return d}
@@ -66,7 +67,7 @@ function drag(t){let ox,oy;
  const end=()=>t.classList.remove('drag');
  t.addEventListener('pointerup',end);t.addEventListener('pointercancel',end)}
 $('#reset').onclick=()=>build(original,cols,aspect);
-$('#make').onclick=()=>{const l=$('#txt').value.split('\n').map(s=>s.trim()).filter(Boolean);
+$('#make').onclick=()=>{const l=$('#txt').value.split('\n').map(s=>s.trim().slice(0,MAXLEN)).filter(Boolean).slice(0,MAXTILES);
  if(!l.length)return;build(l,l.length%4==0?4:Math.min(4,l.length));statusEl.textContent=l.length+' tiles created.'};
 window.addEventListener('resize',()=>{const d=size();[...board.children].forEach(t=>{t.style.width=d.w+'px';t.style.height=d.h+'px'})});
 
@@ -94,12 +95,18 @@ function arrange(boxes){
  rows.forEach(r=>r.sort((a,b)=>a.x-b.x));
  return{list:rows.flat(),cols:Math.max(...rows.map(r=>r.length))}}
 function loadImg(f){return new Promise((ok,no)=>{const im=new Image(),u=URL.createObjectURL(f);
- im.onload=()=>ok(im);im.onerror=()=>no(new Error('image could not be opened'));im.src=u})}
+ im.onload=()=>ok(im);im.onerror=()=>{URL.revokeObjectURL(u);no(new Error('image could not be opened'))};im.src=u})}
 $('#file').onchange=async e=>{const f=e.target.files[0];if(!f)return;
+ let img;
  try{
+  if(f.size>MAXBYTES)throw new Error('file is larger than 15 MB');
   statusEl.textContent='Finding tiles…';
-  const img=await loadImg(f),{c,boxes}=findTiles(img);
+  img=await loadImg(f);
+  if(img.naturalWidth*img.naturalHeight>MAXPIX)throw new Error('image is larger than 16 megapixels');
+  const{c,boxes}=findTiles(img);
+  URL.revokeObjectURL(img.src);
   if(!boxes.length)throw new Error('no tiles detected');
+  if(boxes.length>MAXTILES)throw new Error('more than '+MAXTILES+' tiles found');
   const{list,cols:nc}=arrange(boxes),ins=2,items=[];
   list.forEach((b,i)=>{const sw=b.w-ins*2,sh=b.h-ins*2,k=Math.min(1,360/sw),t=document.createElement('canvas');
    t.width=Math.round(sw*k);t.height=Math.round(sh*k);
@@ -109,6 +116,7 @@ $('#file').onchange=async e=>{const f=e.target.files[0];if(!f)return;
   build(items,nc,asp);
   statusEl.textContent=items.length+' tiles imported as pictures.';
  }catch(err){
+  if(img)URL.revokeObjectURL(img.src);
   statusEl.textContent='Couldn’t import that image ('+err.message+'). Try a screenshot that shows only the tiles.'}
  e.target.value=''};
 
